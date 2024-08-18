@@ -1,0 +1,33 @@
+services:
+  marlin-search-meilisearch:
+    image: getmeili/meilisearch:latest
+    container_name: marlin-search-meilisearch
+    ports:
+      - "7707:7700"
+    environment:
+      MEILI_MASTER_KEY: ${MEILISEARCH_API_KEY}
+    volumes:
+      - meili_data:/meili_data
+    networks:
+      - marlin-network
+
+  marlin-search-indexer:
+    build: .
+    container_name: marlin-search-indexer
+    depends_on:
+      - marlin-search-meilisearch
+    environment:
+      JELLYFIN_URL: ${JELLYFIN_URL}
+      JELLYFIN_API_KEY: ${JELLYFIN_API_KEY}
+      MEILISEARCH_URL: http://marlin-search-meilisearch:7700
+      MEILISEARCH_API_KEY: ${MEILISEARCH_API_KEY}
+      SCRAPE_INTERVAL_HOURS: ${SCRAPE_INTERVAL_HOURS}
+    ports:
+      - "5000:5000"
+    networks:
+      - marlin-network
+
+volumes:
+  meili_data:
+networks:
+  marlin-network:
