@@ -21,7 +21,7 @@ services:
       JELLYFIN_API_KEY: ${JELLYFIN_API_KEY}
       MEILISEARCH_URL: http://marlin-search-meilisearch:7700
       MEILISEARCH_API_KEY: ${MEILISEARCH_API_KEY}
-      SCRAPE_INTERVAL_HOURS: ${SCRAPE_INTERVAL_HOURS}
+      SCRAPE_INTERVAL_MINUTES: ${SCRAPE_INTERVAL_MINUTES}
     ports:
       - "5000:5000"
     networks:

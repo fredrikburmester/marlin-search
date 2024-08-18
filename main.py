@@ -1,43 +1,55 @@
 import os
-import uuid
 import requests
-import schedule
-import time
 from flask import Flask, request, jsonify
-from meilisearch import Client, errors  # Correctly import errors
+from meilisearch import Client, errors
+import logging
 
 # Load environment variables
 JELLYFIN_URL = os.getenv('JELLYFIN_URL')
 JELLYFIN_API_KEY = os.getenv('JELLYFIN_API_KEY')
 MEILISEARCH_URL = os.getenv('MEILISEARCH_URL')
 MEILISEARCH_API_KEY = os.getenv('MEILISEARCH_API_KEY')
-SCRAPE_INTERVAL_HOURS = int(os.getenv('SCRAPE_INTERVAL_HOURS', 1))
+SCRAPE_INTERVAL_MINUTES = int(os.getenv('SCRAPE_INTERVAL_MINUTES', 60))
 
 # Initialize MeiliSearch client
 client = Client(MEILISEARCH_URL, MEILISEARCH_API_KEY)
-index_name = 'jellyfin_items'
+INDEX_NAME = 'jellyfin_items'
+
+# Flask app for API
+app = Flask(__name__)
+app.logger.setLevel(logging.INFO)
+
+handler = logging.StreamHandler()
+handler.setLevel(logging.INFO)
+app.logger.addHandler(handler)
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def ensure_index_exists():
+    """
+    Ensure that an index exists in MeiliSearch with the name INDEX_NAME. 
+    If it does not exist, create it.
+    """
     try:
-        index = client.get_index(index_name)
+        index = client.get_index(INDEX_NAME)
     except errors.MeilisearchApiError as e:
         if "index_not_found" in str(e):
             # Create the index if it does not exist
-            client.create_index(index_name, {'primaryKey': 'Id'})
-            index = client.index(index_name)
-            print(f"Index `{index_name}` created.")
+            client.create_index(INDEX_NAME, {'primaryKey': 'Id'})
+            index = client.index(INDEX_NAME)
+            logging.info(f"Index `{INDEX_NAME}` created.")
         else:
             raise e
-    
+
     index.update_filterable_attributes(['Type'])
     return index
 
 index = ensure_index_exists()
 
-# Flask app for API
-app = Flask(__name__)
-
 def scrape_jellyfin():
+    """
+    Scrape Jellyfin for items and update the MeiliSearch index with these items.
+    """
     headers = {
         'X-Emby-Token': JELLYFIN_API_KEY,
     }
@@ -47,7 +59,7 @@ def scrape_jellyfin():
     try:
         response_data = response.json()
     except requests.exceptions.JSONDecodeError:
-        print(f"Failed to decode JSON response: {response.text}")
+        logging.error(f"Failed to decode JSON response: {response.text}")
         return {"status": "error", "message": "Invalid JSON response from Jellyfin"}, 500
 
     if response.status_code == 200:
@@ -80,15 +92,11 @@ def scrape_jellyfin():
         
         # Store items in MeiliSearch
         index.add_documents(documents)
-        print(f"Added {len(documents)} items to MeiliSearch.")
+        logging.info(f"Added {len(documents)} items to MeiliSearch.")
         return {"status": "success", "message": f"Added {len(documents)} items to MeiliSearch."}, 200
     else:
-        print(f"Failed to fetch items: {response.status_code}")
+        logging.error(f"Failed to fetch items: {response.status_code}")
         return {"status": "error", "message": f"Failed to fetch items: {response.status_code}"}, 500
-
-
-# Schedule the scrape function to run every SCRAPE_INTERVAL_HOURS
-schedule.every(SCRAPE_INTERVAL_HOURS).hours.do(scrape_jellyfin)
 
 @app.route('/search', methods=['GET'])
 def search_items():
@@ -113,7 +121,7 @@ def search_items():
 def trigger_scrape():
     status, code = scrape_jellyfin()
     return jsonify(status), code
-  
+
 @app.route('/clear', methods=['POST'])
 def clear_index():
     try:
@@ -123,16 +131,5 @@ def clear_index():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 if __name__ == '__main__':
-    # Run the scheduler in a background thread
-    def run_scheduler():
-        while True:
-            schedule.run_pending()
-            time.sleep(1)
-
-    from threading import Thread
-    scheduler_thread = Thread(target=run_scheduler)
-    scheduler_thread.daemon = True
-    scheduler_thread.start()
-
-    # Start the Flask API
+    logging.info("Starting Flask app.")
     app.run(host='0.0.0.0', port=5000)

@@ -5,12 +5,15 @@ certifi==2024.7.4
 charset-normalizer==3.3.2
 click==8.1.7
 Flask==3.0.3
+git-filter-repo==2.45.0
+gunicorn==23.0.0
 idna==3.7
 importlib_metadata==8.2.0
 itsdangerous==2.2.0
 Jinja2==3.1.4
 MarkupSafe==2.1.5
 meilisearch==0.31.4
+packaging==24.1
 pydantic==2.8.2
 pydantic_core==2.20.1
 requests==2.32.3

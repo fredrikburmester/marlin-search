@@ -20,7 +20,7 @@ To install Marlin Search, follow these steps:
 
    - JELLYFIN_URL=<jellyfin-server-url>
    - MEILISEARCH_API_KEY=<random-key-here>
-   - SCRAPE_INTERVAL_HOURS=1
+   - SCRAPE_INTERVAL_MINUTES=1
    - JELLYFIN_API_KEY=<jellyfin-api-key>
 
 4. Run `docker-compose up -d` to start the application.
