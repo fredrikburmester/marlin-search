@@ -6,9 +6,22 @@
 
 Marlin Search is a web application that uses the Jellyfin API to fetch media data from your Jellyfin server. It then indexes this data for fast searching through the use of Meilisearch, an open-source search engine.
 
-After installation you can search via Marlin via GET requests on `/search?q=QUERY` where QUERY is what you're looking to find. The results will be returned in JSON format.
+
+## How to use
+
+Since this is not connected to Jellyfin, and does not route any requests, Marlin needs its own domain (or if run locally you can access it as such).
+
+After installation you can search via Marlin via GET requests on `http://your-server-ip:5000/search?q=QUERY` where QUERY is what you're looking to find. 
 
 The results constist of jellyfin item IDs, which you can use with the Jellyfin API to get more detailed information about each media item.
+
+```
+{
+   "ids": ["123", "456]
+}
+```
+
+
 
 ## Installation
 
