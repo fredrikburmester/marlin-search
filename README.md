@@ -1,6 +1,6 @@
 # Marlin Search
 
-> A simple search engine companion to Jellyfin, built with Python, Meilisearch and Flask.
+> A simple search engine companion to Jellyfin, built with TS, Meilisearch and Flask.
 
 ## How it works
 
