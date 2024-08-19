@@ -1,35 +1,34 @@
 # Marlin Search
 
-> A simple search engine companion to Jellyfin, built with TS, Express and Meilisearch.
+> A lightweight search companion for Jellyfin, built with TypeScript, Express, and Meilisearch.
 
 ## How it works
 
-Marlin Search is a web application that uses the Jellyfin API to fetch media data from your Jellyfin server. It then indexes this data for fast searching through the use of Meilisearch, an open-source search engine.
-
+Marlin Search integrates with your Jellyfin server via its API to retrieve media data. This data is then indexed by Meilisearch, enabling fast and efficient searches.
 
 ## How to use
 
-Since this is not connected to Jellyfin, and does not route any requests, Marlin needs its own domain (or if run locally you can access it as such).
-
-After installation you can search via Marlin via GET requests on `http://your-server-ip:5000/search?q=QUERY` where QUERY is what you're looking to find. 
-
-The results constist of jellyfin item IDs, which you can use with the Jellyfin API to get more detailed information about each media item.
+Marlin Search operates independently from Jellyfin, so it requires its own domain or can be accessed locally. After setup, you can search by sending GET requests to:
 
 ```
+http://your-server-ip:5000/search?q=QUERY
+``` 
+
+Replace `QUERY` with your search term. The response will include Jellyfin item IDs, which you can use with the Jellyfin API to retrieve detailed media information.
+
+```json
 {
    "ids": ["123", "456"]
 }
 ```
 
-
-
 ## Installation
 
 To install Marlin Search, follow these steps:
 
-1. Clone this repository and navigate into it.
-2. Create a Jellyfin API key from the Jellyfin admin panel.
-3. Create a .env file in the root directory of this project and add these lines:
+1. Clone the repository and navigate to the project directory.
+2. Generate a Jellyfin API key from the Jellyfin admin panel.
+3. Create a .env file in the project root with the following configuration:
 
    - JELLYFIN_URL=
    - JELLYFIN_API_KEY=
