@@ -39,7 +39,7 @@ To install Marlin Search, follow these steps:
    - BATCH_SIZE=1000
 
 4. Run `docker-compose up -d --build` to start the application.
-5. POST to `/create-index` to index your media data from Jellyfin. This will take a while depending on how much media you have, so be patient.
+5. POST to `/create-index` to index your media data from Jellyfin. Don't forget to use the `Authorization` header with your `EXPRESS_AUTH_TOKEN`. This will take a while depending on how much media you have, so be patient.
 6. Start searching with GET requests to `/search?q=QUERY`.
 
 ## Routes
