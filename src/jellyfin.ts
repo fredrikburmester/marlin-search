@@ -13,7 +13,7 @@ export const scrapeJellyfin = async (): Promise<{
   message: string;
 }> => {
   const headers = { "X-Emby-Token": JELLYFIN_API_KEY! };
-  const batchSize = BATCH_SIZE;
+  const batchSize = BATCH_SIZE || 1000;
   const items = [];
   const allowedTypes = new Set([
     "Movie",

@@ -12,7 +12,7 @@ services:
       - MEILISEARCH_URL=http://marlin-search-meilisearch:7700
       - SCRAPE_INTERVAL_MINUTES=${SCRAPE_INTERVAL_MINUTES}
       - EXPRESS_AUTH_TOKEN=${EXPRESS_AUTH_TOKEN}
-      - BATCH_SIZE={BATCH_SIZE}
+      - BATCH_SIZE=${BATCH_SIZE}
     depends_on:
       - marlin-search-meilisearch
     networks:
