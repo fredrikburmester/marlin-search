@@ -17,7 +17,7 @@ The results constist of jellyfin item IDs, which you can use with the Jellyfin A
 
 ```
 {
-   "ids": ["123", "456]
+   "ids": ["123", "456"]
 }
 ```
 
