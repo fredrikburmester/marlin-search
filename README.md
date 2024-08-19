@@ -19,10 +19,20 @@ To install Marlin Search, follow these steps:
 3. Create a .env file in the root directory of this project and add these lines:
 
    - JELLYFIN_URL=<jellyfin-server-url>
-   - MEILISEARCH_API_KEY=<random-key-here>
-   - SCRAPE_INTERVAL_MINUTES=1
    - JELLYFIN_API_KEY=<jellyfin-api-key>
+   - MEILISEARCH_API_KEY=<random-key-here>
+   - SCRAPE_INTERVAL_MINUTES=60
+   - EXPRESS_AUTH_TOKEN<secret-here>
+   - BATCH_SIZE=1000
 
-4. Run `docker-compose up -d` to start the application.
-5. POST to `/index` to index your media data from Jellyfin. This will take a while depending on how much media you have, so be patient.
+4. Run `docker-compose up -d --build` to start the application.
+5. POST to `/create-index` to index your media data from Jellyfin. This will take a while depending on how much media you have, so be patient.
 6. Start searching with GET requests to `/search?q=QUERY`.
+
+## Routes
+
+1. GET /up - Check if the service is up and running.
+2. GET /search - Search for items in the index. Query parameter 'q' is required.
+3. POST /create-index - Create a new Meilisearch index from Jellyfin data. This will take a while depending on how much media you have, so be patient.
+4. DELETE /delete-index - Delete current Meilisearch index.
+5. POST /clear-index - Clear all items from the current Meilisearch index.

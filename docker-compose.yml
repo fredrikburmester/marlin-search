@@ -9,10 +9,10 @@ services:
       - JELLYFIN_URL=${JELLYFIN_URL}
       - JELLYFIN_API_KEY=${JELLYFIN_API_KEY}
       - MEILISEARCH_API_KEY=${MEILISEARCH_API_KEY}
-      - MEILISEARCH_URL=http://marlin-search-meilisearch:7700
       - SCRAPE_INTERVAL_MINUTES=${SCRAPE_INTERVAL_MINUTES}
       - EXPRESS_AUTH_TOKEN=${EXPRESS_AUTH_TOKEN}
       - BATCH_SIZE=${BATCH_SIZE}
+      - MEILISEARCH_URL=http://marlin-search-meilisearch:7700
     depends_on:
       - marlin-search-meilisearch
     networks:

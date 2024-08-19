@@ -30,7 +30,6 @@ function checkEnvVariableAsInt(
 
 export const JELLYFIN_URL = checkEnvVariable("JELLYFIN_URL");
 export const JELLYFIN_API_KEY = checkEnvVariable("JELLYFIN_API_KEY");
-export const MEILISEARCH_URL = checkEnvVariable("MEILISEARCH_URL");
 export const MEILISEARCH_API_KEY = checkEnvVariable("MEILISEARCH_API_KEY");
 export const EXPRESS_AUTH_TOKEN = checkEnvVariable("EXPRESS_AUTH_TOKEN", false);
 export const BATCH_SIZE = checkEnvVariableAsInt("BATCH_SIZE", 1000);
