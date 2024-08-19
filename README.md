@@ -18,11 +18,11 @@ To install Marlin Search, follow these steps:
 2. Create a Jellyfin API key from the Jellyfin admin panel.
 3. Create a .env file in the root directory of this project and add these lines:
 
-   - JELLYFIN_URL=<jellyfin-server-url>
-   - JELLYFIN_API_KEY=<jellyfin-api-key>
-   - MEILISEARCH_API_KEY=<random-key-here>
+   - JELLYFIN_URL=
+   - JELLYFIN_API_KEY=
+   - MEILISEARCH_API_KEY=
    - SCRAPE_INTERVAL_MINUTES=60
-   - EXPRESS_AUTH_TOKEN<secret-here>
+   - EXPRESS_AUTH_TOKEN=
    - BATCH_SIZE=1000
 
 4. Run `docker-compose up -d --build` to start the application.
