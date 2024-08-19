@@ -1,26 +1,27 @@
-# Use an official Python runtime as a parent image
-FROM python:3.9-slim
+# Dockerfile
+# Use an official Node.js runtime as the base image
+FROM node:18-alpine
 
-# Set environment variable to disable Python output buffering
-ENV PYTHONUNBUFFERED=1
-
-# Set the working directory in the container
+# Set the working directory
 WORKDIR /app
 
-# Copy the requirements.txt file into the container at /app
-COPY requirements.txt /app/
+# Copy package.json and package-lock.json
+COPY package*.json ./
 
-# Install the required Python packages from requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+# Install dependencies
+RUN npm install
 
-# Copy the rest of the application code into the container at /app
-COPY . /app
+# Copy the rest of the application code
+COPY . .
 
-# Expose port 5000
+# Build the TypeScript code
+RUN npm run build
+
+# Expose the port the app runs on
 EXPOSE 5000
 
-# Copy and use a bash script to start both Gunicorn and the scheduler
-COPY start.sh /app/start.sh
-RUN chmod +x /app/start.sh
+# Set environment variables
+ENV NODE_ENV production
 
-CMD ["/app/start.sh"]
+# Command to run the application
+CMD ["npm", "start"]

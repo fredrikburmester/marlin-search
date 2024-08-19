@@ -1,0 +1,348 @@
+import express, { NextFunction, type Request, type Response } from "express";
+import Client from "meilisearch";
+import axios from "axios";
+import { createLogger, format, transports } from "winston";
+import "winston-daily-rotate-file";
+import * as dotenv from "dotenv";
+
+dotenv.config();
+
+const JELLYFIN_URL = process.env.JELLYFIN_URL;
+const JELLYFIN_API_KEY = process.env.JELLYFIN_API_KEY;
+const MEILISEARCH_URL = process.env.MEILISEARCH_URL;
+const MEILISEARCH_API_KEY = process.env.MEILISEARCH_API_KEY;
+const EXPRESS_AUTH_TOKEN = process.env.EXPRESS_AUTH_TOKEN;
+const BATCH_SIZE = parseInt(process.env.BATCH_SIZE || "1000", 1000);
+const SCRAPE_INTERVAL_MINUTES = parseInt(
+  process.env.SCRAPE_INTERVAL_MINUTES || "60",
+  10
+);
+
+// Initialize MeiliSearch client
+const client = new Client({
+  host: MEILISEARCH_URL!,
+  apiKey: MEILISEARCH_API_KEY,
+});
+const INDEX_NAME = "jellyfin_items";
+
+// Express app for API
+const app = express();
+app.use(express.json());
+
+const logger = createLogger({
+  level: "info",
+  format: format.combine(
+    format.timestamp({ format: "YYYY-MM-DD HH:mm:ss" }),
+    format.printf(
+      ({ timestamp, level, message }) => `[${timestamp}] [${level}] ${message}`
+    )
+  ),
+  transports: [
+    new transports.Console({
+      format: format.combine(format.colorize(), format.simple()),
+    }),
+  ],
+});
+
+if (process.env.NODE_ENV !== "production") {
+  logger.add(
+    new transports.DailyRotateFile({
+      filename: "app-%DATE%.log",
+      datePattern: "YYYY-MM-DD",
+      maxFiles: "14d",
+    })
+  );
+}
+
+const ensureIndexExists = async () => {
+  try {
+    await client.getIndex(INDEX_NAME);
+    logger.info(`Index \`${INDEX_NAME}\` already exists.`);
+  } catch (e: any) {
+    if (e.code === "index_not_found") {
+      try {
+        await client.createIndex(INDEX_NAME, { primaryKey: "Id" });
+        logger.info(`Index \`${INDEX_NAME}\` created successfully.`);
+      } catch (createError: any) {
+        logger.error(`Failed to create index: ${createError.message}`);
+        throw createError;
+      }
+    } else {
+      logger.error(`Unexpected error when getting index: ${e.message}`);
+      throw e;
+    }
+  }
+
+  try {
+    const index = client.index(INDEX_NAME);
+
+    // Update filterable attributes
+    await index.updateFilterableAttributes([
+      "Type",
+      "MediaType",
+      "IsFolder",
+      "Container",
+      "OfficialRating",
+    ]);
+    logger.info("Updated filterable attributes.");
+
+    // Update sortable attributes
+    await index.updateSortableAttributes([
+      "Name",
+      "ProductionYear",
+      "CriticRating",
+      "RunTimeTicks",
+    ]);
+    logger.info("Updated sortable attributes.");
+  } catch (e: any) {
+    logger.error(`Failed to update attributes: ${e.message}`);
+    throw e;
+  }
+};
+
+const scrapeJellyfin = async (): Promise<{
+  status: string;
+  message: string;
+}> => {
+  const headers = { "X-Emby-Token": JELLYFIN_API_KEY! };
+  const batchSize = BATCH_SIZE;
+  const items = [];
+  const allowedTypes = new Set([
+    "Movie",
+    "Series",
+    "Episode",
+    "MusicArtist",
+    "MusicAlbum",
+    "Audio",
+  ]);
+
+  try {
+    for (const type of allowedTypes) {
+      logger.info(`Fetching items of type ${type} from Jellyfin...`);
+
+      // Fetch the total number of items for the current type
+      const totalItemsResponse = await axios.get(`${JELLYFIN_URL}/Items`, {
+        params: {
+          Recursive: true,
+          StartIndex: 0,
+          Limit: 1,
+          IncludeItemTypes: type,
+        },
+        headers,
+        timeout: 30000,
+      });
+
+      const totalItems = totalItemsResponse.data.TotalRecordCount;
+      const totalBatches = Math.ceil(totalItems / batchSize);
+      logger.info(
+        `Total ${type} items found: ${totalItems}. Fetching in ${totalBatches} batches of ${batchSize}...`
+      );
+
+      for (let index = 0; index < totalBatches; index++) {
+        const startIndex = index * batchSize;
+        logger.info(
+          `Fetching batch ${
+            index + 1
+          }/${totalBatches} of type ${type} starting at index ${startIndex}...`
+        );
+
+        const response = await axios.get(`${JELLYFIN_URL}/Items`, {
+          params: {
+            Recursive: true,
+            StartIndex: startIndex,
+            Limit: batchSize,
+            IncludeItemTypes: type,
+            fields:
+              "Id,Name,Type,MediaType,IsFolder,Container,ProductionYear,OriginalTitle,Overview,CriticRating,OfficialRating,Genres,Studios,People,Taglines,RunTimeTicks",
+          },
+          headers,
+          timeout: 30000,
+        });
+
+        logger.info(
+          `Batch ${
+            index + 1
+          }/${totalBatches} of type ${type} fetched successfully.`
+        );
+        const batchItems = response.data.Items || [];
+
+        // Map the fields to include only the desired ones
+        const filteredItems = batchItems.map((item: any) => ({
+          Id: item.Id,
+          Name: item.Name,
+          Type: item.Type,
+          MediaType: item.MediaType,
+          IsFolder: item.IsFolder,
+          Container: item.Container,
+          ProductionYear: item.ProductionYear,
+          OriginalTitle: item.OriginalTitle,
+          Overview: item.Overview,
+          CriticRating: item.CriticRating,
+          OfficialRating: item.OfficialRating,
+          Genres: item.Genres,
+          Studios: item.Studios,
+          People: item.People,
+          Taglines: item.Taglines,
+          RunTimeTicks: item.RunTimeTicks,
+        }));
+
+        items.push(...filteredItems);
+      }
+
+      logger.info(
+        `Finished fetching all batches for type ${type}, found ${items.length} items. Now adding to MeiliSearch...`
+      );
+
+      // Indexing the filtered items for this type in MeiliSearch
+      const index = client.index(INDEX_NAME);
+      await index.addDocuments(items);
+      logger.info(
+        `Added ${items.length} items of type ${type} to MeiliSearch.`
+      );
+
+      // Clear the items array for the next type
+      items.length = 0;
+    }
+
+    return {
+      status: "success",
+      message: `All items have been added to MeiliSearch.`,
+    };
+  } catch (error: any) {
+    logger.error(`Error occurred: ${error.message}`);
+    return {
+      status: "error",
+      message: `Error occurred: ${error.message}`,
+    };
+  }
+};
+
+const authenticateToken = (req: Request, res: Response, next: NextFunction) => {
+  const token = req.headers["authorization"];
+
+  if (token === EXPRESS_AUTH_TOKEN) {
+    next(); // Token is valid, proceed to the route handler
+  } else {
+    res
+      .status(403)
+      .json({ status: "error", message: "Forbidden: Invalid token" });
+  }
+};
+
+app.get("/up", async (req: Request, res: Response) => {
+  res.sendStatus(200);
+});
+
+app.get("/search", async (req: Request, res: Response) => {
+  const query = req.query.q as string;
+  const includeItemTypes = req.query.includeItemTypes as string[];
+
+  if (!query) {
+    return res.status(400).json({ error: "No query provided" });
+  }
+
+  const filterQuery =
+    includeItemTypes && includeItemTypes.length
+      ? includeItemTypes.map((type) => `Type = '${type}'`).join(" OR ")
+      : "";
+
+  try {
+    const index = client.index(INDEX_NAME);
+    const searchResults = await index.search(
+      query,
+      filterQuery ? { filter: filterQuery } : {}
+    );
+    const ids = searchResults.hits.map((hit: any) => hit.Id);
+    res.json({ ids });
+  } catch (error: any) {
+    logger.error(`MeiliSearch error during search: ${error.message}`);
+    res.status(500).json({ error: "An error occurred during the search" });
+  }
+});
+
+app.post("/create-index", authenticateToken, (req: Request, res: Response) => {
+  res.status(200).json({
+    status: "job started",
+    message: "Scraping job is running in the background.",
+  });
+
+  // Run the scrape job in the background
+  (async () => {
+    const startTime = Date.now();
+    const { status, message } = await scrapeJellyfin();
+    const elapsedTime = (Date.now() - startTime) / 1000;
+    logger.info(`Scrape completed in ${elapsedTime.toFixed(2)} seconds`);
+
+    if (status !== "success") {
+      logger.error(`Scraping failed: ${message}`);
+    }
+  })().catch((error) => {
+    logger.error(`Unexpected error in background job: ${error.message}`);
+  });
+});
+
+app.post("/clear", authenticateToken, async (req: Request, res: Response) => {
+  try {
+    const index = client.index(INDEX_NAME);
+    await index.deleteAllDocuments();
+    logger.info("Index cleared successfully.");
+    res
+      .status(200)
+      .json({ status: "success", message: "Index cleared successfully." });
+  } catch (error: any) {
+    logger.error(`Failed to clear index: ${error.message}`);
+    res.status(500).json({
+      status: "error",
+      message: `Failed to clear index: ${error.message}`,
+    });
+  }
+});
+
+app.delete(
+  "/delete-index",
+  authenticateToken,
+  async (req: Request, res: Response) => {
+    try {
+      // Attempt to delete the index
+      await client.deleteIndex(INDEX_NAME);
+      logger.info(`Index \`${INDEX_NAME}\` deleted successfully.`);
+      res.status(200).json({
+        status: "success",
+        message: `Index \`${INDEX_NAME}\` deleted successfully.`,
+      });
+    } catch (e: any) {
+      logger.error(`Failed to delete index: ${e.message}`);
+      res.status(500).json({
+        status: "error",
+        message: `Failed to delete index: ${e.message}`,
+      });
+    }
+  }
+);
+
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => {
+  logger.info(`Express app running on port ${PORT}`);
+
+  ensureIndexExists().catch((err) => {
+    logger.error(`Error during index setup: ${err.message}`);
+    process.exit(1);
+  });
+
+  // Schedule the scraping job at intervals defined by SCRAPE_INTERVAL_MINUTES
+  const scrapeIntervalMs = SCRAPE_INTERVAL_MINUTES * 60 * 1000; // Convert minutes to milliseconds
+
+  setInterval(async () => {
+    logger.info("Scheduled scrape job started.");
+    const startTime = Date.now();
+    const { status, message } = await scrapeJellyfin();
+    const elapsedTime = (Date.now() - startTime) / 1000;
+    logger.info(
+      `Scheduled scrape completed in ${elapsedTime.toFixed(2)} seconds`
+    );
+
+    if (status !== "success") {
+      logger.error(`Scheduled scraping failed: ${message}`);
+    }
+  }, scrapeIntervalMs);
+});
