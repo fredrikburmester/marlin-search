@@ -1,6 +1,6 @@
 # Marlin Search
 
-> A simple search engine companion to Jellyfin, built with Python, Meilisearch and Flask.
+> A lightweight search companion for Jellyfin, built with TypeScript, Express, and Meilisearch.
 
 ## How it works
 
@@ -38,19 +38,19 @@ If you use something like Tailscale then this is really easy since you can use l
 
 To install Marlin Search, follow these steps:
 
-1. Clone this repository and navigate into it.
-2. Create a Jellyfin API key from the Jellyfin admin panel.
-3. Create a .env file in the root directory of this project and add these lines:
+1. Clone the repository and navigate to the project directory.
+2. Generate a Jellyfin API key from the Jellyfin admin panel.
+3. Create a .env file in the project root with the following configuration:
 
-   - JELLYFIN_URL=<jellyfin-server-url>
-   - JELLYFIN_API_KEY=<jellyfin-api-key>
-   - MEILISEARCH_API_KEY=<random-key-here>
+   - JELLYFIN_URL=
+   - JELLYFIN_API_KEY=
+   - MEILISEARCH_API_KEY=
    - SCRAPE_INTERVAL_MINUTES=60
-   - EXPRESS_AUTH_TOKEN<secret-here>
+   - EXPRESS_AUTH_TOKEN=
    - BATCH_SIZE=1000
 
 4. Run `docker-compose up -d --build` to start the application.
-5. POST to `/create-index` to index your media data from Jellyfin. This will take a while depending on how much media you have, so be patient.
+5. POST to `/create-index` to index your media data from Jellyfin. Don't forget to use the `Authorization` header with your `EXPRESS_AUTH_TOKEN`. This will take a while depending on how much media you have, so be patient.
 6. Start searching with GET requests to `/search?q=QUERY`.
 
 ## Routes
