@@ -1,0 +1,93 @@
+name: build-push-image
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]  # Only triggers when a release is published
+  schedule:
+    - cron: "0 0 * * *" # Nightly build
+
+# Necessary for ghcr.io function
+permissions:
+  packages: write
+
+jobs:
+  docker:
+    runs-on: ubuntu-24.04
+    
+    strategy:
+      # Prevent a failure in one image from stopping the other builds
+      fail-fast: false
+      matrix:
+        registry:
+          - dockerhub
+          - ghcr
+        include:
+          - context: "."
+            file: "Dockerfile"
+            image: "marlin-search"
+            platforms: "linux/amd64"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Generate Metadata
+        env:
+          GITHUB_USERNAME: "ghcr.io/${{ github.repository_owner }}"
+        id: metadata
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ${{ matrix.registry == 'dockerhub' && secrets.DOCKER_USERNAME || env.GITHUB_USERNAME }}/${{ matrix.image }}
+          tags: |
+            type=schedule,pattern=nightly
+            type=semver,pattern={{version}},enable=${{ github.event_name == 'release' || github.event_name == 'workflow_dispatch' }}
+            type=raw,value=latest,enable=${{ github.event_name == 'release' || github.event_name == 'workflow_dispatch' }}
+          labels: |
+            org.opencontainers.image.title=${{ github.repository }}
+            org.opencontainers.image.source=${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ github.run_created_at }}
+
+      # - name: Ensure tags are not empty
+      #   id: ensure_tags
+      #   run: |
+      #     echo "Tags: ${{ steps.metadata.outputs.tags }}"
+      #     if [ -z "${{ steps.metadata.outputs.tags }}" ]; then
+      #       echo "No tags generated, setting fallback tag"
+      #       echo "::set-output name=tags::latest"
+      #     fi
+
+      - name: Log in to Registry
+        env:
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+        if: |
+          matrix.registry == 'dockerhub' && env.DOCKER_USERNAME ||
+          matrix.registry == 'ghcr'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ matrix.registry == 'dockerhub' && 'docker.io' || 'ghcr.io' }}
+          username: ${{ matrix.registry == 'dockerhub' && secrets.DOCKER_USERNAME || github.repository_owner }}
+          password: ${{ matrix.registry == 'dockerhub' && secrets.DOCKER_TOKEN || secrets.GITHUB_TOKEN  }}
+
+      - name: Build and Push Docker Image
+        env:
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+        if: |
+          matrix.registry == 'dockerhub' && env.DOCKER_USERNAME ||
+          matrix.registry == 'ghcr'
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          platforms: ${{ matrix.platforms }}
+          # Skip pushing when PR from a fork
+          push: ${{ !github.event.pull_request.head.repo.fork }}
+          tags: ${{ steps.metadata.outputs.tags }}
+          labels: ${{ steps.metadata.outputs.labels }}
