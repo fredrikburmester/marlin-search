@@ -22,7 +22,7 @@ services:
     image: getmeili/meilisearch:latest
     container_name: marlin-search-meilisearch
     ports:
-      - "7707:7700"
+      - "7700:7700"
     environment:
       - MEILI_ENV=production
       - MEILI_MASTER_KEY=${MEILISEARCH_API_KEY}
