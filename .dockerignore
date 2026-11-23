@@ -1,0 +1,8 @@
+# Ignore everything ...
+*
+
+# ... except:
+!src/**/*.ts
+!package.json
+!tsconfig.json
+!package-lock.json
