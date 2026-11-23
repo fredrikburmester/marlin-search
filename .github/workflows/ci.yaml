@@ -1,0 +1,213 @@
+---
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
+env:
+  # Unique per run attempt, so a stale or crossed-over artifact can never be
+  # mistaken for this run's image. Both derive entirely from the `github`
+  # context, which is why no job needs a step to compute them.
+  IMAGE_REF: marlin-search:ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}
+  ARTIFACT_NAME: image-${{ github.run_id }}-${{ github.run_attempt }}
+  # The file inside that artifact.
+  IMAGE_TAR: marlin-ci.tar
+  # note: meilisearch rejects a master key shorter than 16 bytes in "production" mode
+  MEILI_KEY: ci-master-key-0123456789
+
+jobs:
+  test:
+    name: test (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # Quoted: an unquoted two-part version such as 20.10 parses as the
+        # float 20.1 and would silently request the wrong Node.
+        node:
+          - "24"
+          - "26"
+    steps:
+      - id: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - id: setup-node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          cache: npm
+          node-version: ${{ matrix.node }}
+
+      - id: install
+        run: npm ci
+
+      - id: typecheck
+        run: npm run typecheck
+
+      - id: test
+        run: npm test
+
+  build:
+    name: build image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - id: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - id: setup-buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+
+      # Exported as a docker-archive rather than pushed: nothing reaches a
+      # registry until `publish` runs, and this works for fork pull requests,
+      # whose token is read-only. Single platform; `publish` handles multi-arch.
+      #
+      # The cache scope is keyed on the runner architecture, the same way
+      # `publish` keys its own, so both workflows share layers for a given
+      # architecture instead of each rebuilding the image from scratch.
+      - id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: .
+          push: false
+          tags: ${{ env.IMAGE_REF }}
+          cache-from: type=gha,scope=${{ runner.arch }}
+          cache-to: type=gha,mode=max,scope=${{ runner.arch }}
+          outputs: type=docker,dest=${{ runner.temp }}/${{ env.IMAGE_TAR }}
+
+      - id: upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          retention-days: 1
+          if-no-files-found: error
+          name: ${{ env.ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/${{ env.IMAGE_TAR }}
+
+      - id: compose
+        name: Validate docker-compose.yaml
+        env:
+          JELLYFIN_API_KEY: ci
+          EXPRESS_AUTH_TOKEN: ci
+          MEILISEARCH_API_KEY: ${{ env.MEILI_KEY }}
+          JELLYFIN_URL: http://jellyfin.invalid:8096
+        run: docker compose config --quiet
+
+  smoke:
+    name: image smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    needs:
+      - build
+
+    services:
+      # Started and waited on by the runner during job setup, so nothing below
+      # polls for it.
+      meilisearch:
+        image: docker.io/getmeili/meilisearch:v1.57@sha256:91bf09897482c17205c8faeca8daa8d57999fb9de20d862763cdfa92ba4ec790
+        env:
+          MEILI_ENV: production
+          MEILI_MASTER_KEY: ${{ env.MEILI_KEY }}
+        ports:
+          - 7700:7700
+        options: >-
+          --health-cmd "curl --fail --silent http://localhost:7700/health"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 12
+          --health-start-period 10s
+
+    steps:
+      - id: download
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: ${{ runner.temp }}
+
+      # The image cannot be a service container: services are pulled and
+      # started during job setup, before any step runs, so there is no point
+      # at which a loaded archive would be visible to them.
+      - id: load
+        name: Load the image built upstream
+        run: docker load --input "${RUNNER_TEMP}/${IMAGE_TAR}"
+
+      # Host networking puts the container on the same loopback as the
+      # `meilisearch` service's published port. `--pull=never` turns a
+      # missing or mistyped tag into a hard local failure.
+      - id: run
+        name: Start the image against the meilisearch service
+        run: >-
+          docker run --detach --pull=never
+          --name marlin --network host
+          --env JELLYFIN_API_KEY=ci
+          --env EXPRESS_AUTH_TOKEN=ci
+          --env MEILISEARCH_API_KEY="${MEILI_KEY}"
+          --env MEILISEARCH_URL=http://127.0.0.1:7700
+          --env JELLYFIN_URL=http://jellyfin.invalid:8096
+          "${IMAGE_REF}"
+
+      # Proves the image boots, reaches meilisearch, creates its index and
+      # serves traffic. `curl` handles waiting, no need for a polling loop.
+      - id: up
+        name: GET /up
+        run: >-
+          curl --fail --silent
+          --show-error --retry 30
+          --retry-delay 2 --retry-connrefused
+          --retry-all-errors http://127.0.0.1:5000/up
+
+      # Runs the Dockerfile's own `HEALTHCHECK` command, so a broken health
+      # probe fails CI rather than silently shipping.
+      - id: healthcheck
+        name: The image's HEALTHCHECK command succeeds
+        run: >-
+          docker exec marlin
+          wget --no-verbose --tries=1
+          --spider http://127.0.0.1:5000/up
+
+      - id: search
+        name: GET /search
+        run: curl --fail --silent 'http://127.0.0.1:5000/search?q=anything'
+
+      # Steps run under `bash -e`, so a failed `test` aborts on its own; the
+      # statements only need separating, not chaining.
+      - id: refuses
+        name: Admin route refuses unauthenticated requests
+        run: >-
+          status="$(curl --silent --output /dev/null --write-out
+          '%{http_code}' --request POST 'http://127.0.0.1:5000/create-index')";
+          echo "POST /create-index without a token -> ${status}";
+          test "${status}" = "401"
+
+      - id: accepts
+        name: Admin route accepts configured tokens
+        run: >-
+          status="$(curl --silent --output /dev/null --write-out '%{http_code}'
+          --request POST --header 'Authorization: Bearer ci'
+          'http://127.0.0.1:5000/create-index')";
+          echo "POST /create-index with a token -> ${status}";
+          test "${status}" = "202"
+
+      - id: logs
+        name: Container logs
+        if: always()
+        run: docker logs marlin

@@ -1,0 +1,180 @@
+---
+name: Publish image
+
+on:
+  push:
+    tags:
+      - v*
+    branches:
+      - master
+  workflow_dispatch:
+
+# Never cancel a `publish` midway - a half-pushed manifest is worse than a slow one.
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # Must be lowercase: GHCR rejects uppercase image paths, and
+  # `docker/metadata-action` lowercases its own output, so a mixed-case
+  # repository would push tags and digests that disagree.
+  IMAGE: ghcr.io/${{ github.repository }}
+
+# Granted per job; only the jobs that push to the registry get packages: write.
+permissions: {}
+
+jobs:
+  # Gate: never publish an image whose tests don't pass, even on a direct
+  # push to master that skipped pull request review.
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - id: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      # `npm ci` verifies every package against the integrity hashes in
+      # package-lock.json, so a tampered cache entry fails to install
+      # jactionlint ignore=cache-poisoning
+      - id: setup-node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          cache: npm
+          node-version: "26"
+      - id: install
+        run: npm ci
+      - id: test
+        run: npm test
+
+  build:
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    needs:
+      - test
+    outputs:
+      amd64: ${{ steps.digest.outputs.amd64 }}
+      arm64: ${{ steps.digest.outputs.arm64 }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - ubuntu-latest # linux/amd64
+          - ubuntu-24.04-arm # linux/arm64
+
+    steps:
+      - id: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - id: setup-buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+
+      - id: login
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Only the labels are used here; tags are applied to the merged manifest.
+      - id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
+        with:
+          images: ${{ env.IMAGE }}
+
+      # Scoped on the runner architecture, the same key `ci` uses, so the two
+      # workflows share layers for a given architecture and the two legs never
+      # read each other's. GitHub isolates caches by branch, so only a push to
+      # master can populate what a tag build restores.
+      # jactionlint ignore=cache-poisoning
+      - id: build
+        name: Build and push by digest
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: .
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ runner.arch }}
+          cache-to: type=gha,mode=max,scope=${{ runner.arch }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+
+      # Hand `merge` a complete `image@sha256:...` reference, so neither side
+      # has to take the digest apart and put it back together.
+      #
+      # Each leg writes only its own key and leaves the other empty. An output
+      # with an empty value is not set, so it never overrides the sibling leg -
+      # which is what lets one matrix job surface both references.
+      - id: digest
+        name: Record the pushed digest
+        env:
+          ARCH: ${{ case(runner.arch == 'X64', 'amd64', runner.arch == 'ARM64', 'arm64', 'unsupported') }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          if [ "${ARCH}" = unsupported ]; then
+            echo "::error::no image platform mapped for runner arch ${RUNNER_ARCH}"
+            exit 1
+          fi
+
+          echo "${ARCH}=${IMAGE}@${DIGEST}" | tee -a "${GITHUB_OUTPUT}"
+
+  merge:
+    needs:
+      - build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - id: setup-buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+
+      - id: login
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=ref,event=branch
+            type=sha,format=short
+            type=semver,pattern={{major}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      # Stitch the per-architecture images into one multi-platform manifest and
+      # tag it. Both sources are named outright - there is no directory to scan
+      # and nothing that could quietly contribute an extra argument.
+      - id: manifest
+        name: Create manifest list and push
+        env:
+          # Expands to `--tag a --tag b --tag c`, assembled by the expression
+          # evaluator so the shell never has to parse JSON.
+          TAG_FLAGS: >-
+            --tag ${{ join(fromJSON(steps.meta.outputs.json).tags, ' --tag ') }}
+          AMD64: ${{ needs.build.outputs.amd64 }}
+          ARM64: ${{ needs.build.outputs.arm64 }}
+        run: |
+          # TAG_FLAGS is the one value deliberately left to word splitting;
+          # metadata-action reduces tags to [a-zA-Z0-9._-], so none of them can
+          # introduce an argument boundary.
+          # shellcheck disable=SC2086
+          docker buildx imagetools create $TAG_FLAGS "${AMD64}" "${ARM64}"
+
+      - id: inspect
+        name: Inspect the published manifest
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: docker buildx imagetools inspect "${IMAGE}:${VERSION}"
