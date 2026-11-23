@@ -1,27 +1,18 @@
 import { createLogger, format, transports } from "winston";
-import "winston-daily-rotate-file";
+
+const { colorize, combine, errors, printf, timestamp } = format;
 
 export const logger = createLogger({
-  level: "info",
-  format: format.combine(
-    format.timestamp({ format: "YYYY-MM-DD HH:mm:ss" }),
-    format.printf(
-      ({ timestamp, level, message }) => `[${timestamp}] [${level}] ${message}`
+  level: process.env.LOG_LEVEL?.trim() || "info",
+  format: combine(
+    // Only colorize for terminals
+    ...(process.stdout.isTTY ? [colorize()] : []),
+    errors({ stack: true }),
+    timestamp({ format: "YYYY-MM-DD HH:mm:ss" }),
+    printf(
+      ({ timestamp, level, message, stack }) =>
+        `[${timestamp}] [${level}] ${stack ?? message}`
     )
   ),
-  transports: [
-    new transports.Console({
-      format: format.combine(format.colorize(), format.simple()),
-    }),
-  ],
+  transports: [new transports.Console()],
 });
-
-if (process.env.NODE_ENV !== "production") {
-  logger.add(
-    new transports.DailyRotateFile({
-      filename: "app-%DATE%.log",
-      datePattern: "YYYY-MM-DD",
-      maxFiles: "14d",
-    })
-  );
-}
