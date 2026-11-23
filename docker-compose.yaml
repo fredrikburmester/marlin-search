@@ -1,0 +1,85 @@
+---
+name: marlin-search
+
+volumes:
+  meili_data:
+
+networks:
+  marlin-net:
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-file: "3"
+    max-size: 10m
+
+services:
+  meilisearch:
+    image: docker.io/getmeili/meilisearch:v1.57.0
+    restart: unless-stopped
+    container_name: meilisearch
+    expose:
+      - 7700
+    environment:
+      MEILI_ENV: production
+      MEILI_MASTER_KEY: >-
+        ${MEILISEARCH_API_KEY:?set MEILISEARCH_API_KEY in .env}
+    healthcheck:
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+      test: >-
+        curl --fail --silent http://localhost:7700/health
+    volumes:
+      - meili_data:/meili_data
+    networks:
+      - marlin-net
+    logging: *default-logging
+
+  marlin-search:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ghcr.io/fredrikburmester/marlin-search:latest
+    restart: unless-stopped
+    container_name: marlin-search
+    logging: *default-logging
+    environment:
+      # See README for what each env var controls.
+      # Optional
+      LOG_LEVEL: >-
+        ${LOG_LEVEL:-info}
+      BATCH_SIZE: >-
+        ${BATCH_SIZE:-1000}
+      SEARCH_LIMIT: >-
+        ${SEARCH_LIMIT:-50}
+      SEARCH_AUTH_TOKEN: >-
+        ${SEARCH_AUTH_TOKEN:-}
+      WEBHOOK_AUTH_TOKEN: >-
+        ${WEBHOOK_AUTH_TOKEN:-}
+      SCRAPE_INTERVAL_MINUTES: >-
+        ${SCRAPE_INTERVAL_MINUTES:-60}
+      # Required
+      MEILISEARCH_URL: http://meilisearch:7700
+      PORT: >-
+        ${MARLIN_PORT:-5000}
+      JELLYFIN_URL: >-
+        ${JELLYFIN_URL:?set JELLYFIN_URL in .env}
+      JELLYFIN_API_KEY: >-
+        ${JELLYFIN_API_KEY:?set JELLYFIN_API_KEY in .env}
+      EXPRESS_AUTH_TOKEN: >-
+        ${EXPRESS_AUTH_TOKEN:?set EXPRESS_AUTH_TOKEN in .env}
+      MEILISEARCH_API_KEY: >-
+        ${MEILISEARCH_API_KEY:?set MEILISEARCH_API_KEY in .env}
+    networks:
+      marlin-net:
+    ports:
+      - name: api
+        protocol: tcp
+        app_protocol: http
+        target: ${MARLIN_PORT:-5000}
+        published: ${MARLIN_PORT:-5000}
+    depends_on:
+      meilisearch:
+        condition: service_healthy
