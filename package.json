@@ -11,7 +11,7 @@
     "start": "node build/index.js",
     "dev": "node --watch src/index.ts",
     "typecheck": "tsc --noEmit",
-    "test": "npm run build && node --test test/",
+    "test": "npm run build && node --test \"test/**/*.test.js\"",
     "watch": "tsc --watch"
   },
   "devDependencies": {
